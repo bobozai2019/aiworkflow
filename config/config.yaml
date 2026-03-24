@@ -1,0 +1,17 @@
+app:
+  name: "Multi-Agent System"
+  version: "1.0.0"
+  debug: true
+
+output:
+  dir: "${OUTPUT_DIR}"
+
+logging:
+  level: INFO
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}"
+  file: "logs/app.log"
+
+http:
+  timeout: 60
+  max_retries: 3
+  pool_size: 5

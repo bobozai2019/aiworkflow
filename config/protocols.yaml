@@ -1,0 +1,21 @@
+protocols:
+  deepseek:
+    base_url: "https://api.deepseek.com"
+    api_key: "${DEEPSEEK_API_KEY}"
+    default_model: "deepseek-chat"
+    
+  qwen:
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key: "${QWEN_API_KEY}"
+    default_model: "qwen-plus"
+    
+  glm:
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    api_key: "${GLM_API_KEY}"
+    default_model: "glm-4"
+    
+  minimax:
+    base_url: "https://api.minimax.chat/v1"
+    api_key: "${MINIMAX_API_KEY}"
+    group_id: "${MINIMAX_GROUP_ID}"
+    default_model: "abab6.5-chat"
