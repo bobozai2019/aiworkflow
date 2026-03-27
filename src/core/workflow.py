@@ -179,13 +179,15 @@ class Workflow:
                 logger.info(f"[Workflow] ✅ {agent.name} 执行成功")
                 if result.saved_files:
                     logger.info(f"[Workflow] 保存的文件: {result.saved_files}")
+                
+                if self.on_progress:
+                    self.on_progress(agent.name, "complete", progress)
             else:
                 logger.error(f"[Workflow] ❌ {agent.name} 执行失败: {result.error}")
-            
-            if self.on_progress:
-                self.on_progress(agent.name, "complete", progress)
-            
-            if not result.success:
+                
+                if self.on_progress:
+                    self.on_progress(agent.name, "failed", progress)
+                
                 logger.error(f"[Workflow] Agent {agent.name} failed, stopping workflow")
                 return result
         

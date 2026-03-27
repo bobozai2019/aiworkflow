@@ -25,58 +25,72 @@ _ws_handler: Optional[WebSocketHandler] = None
 _start_time: datetime = None
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
-    global _notification_manager, _ws_handler, _start_time
+def create_app() -> FastAPI:
+    """
+    创建FastAPI应用实例
     
-    _start_time = datetime.now()
-    _notification_manager = NotificationManager()
-    _ws_handler = WebSocketHandler(_notification_manager)
+    Returns:
+        FastAPI应用实例
+    """
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        global _notification_manager, _ws_handler, _start_time
+        
+        _start_time = datetime.now()
+        _notification_manager = NotificationManager()
+        _ws_handler = WebSocketHandler(_notification_manager)
+        
+        set_notification_manager(_notification_manager)
+        
+        logger.info("API服务器启动")
+        
+        yield
+        
+        logger.info("API服务器关闭")
     
-    set_notification_manager(_notification_manager)
+    app = FastAPI(
+        title="Multi-Agent System API",
+        description="多Agent协作系统API",
+        version="1.0.0",
+        lifespan=lifespan
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.include_router(api_router, prefix="/api")
+
+    @app.get("/")
+    async def root():
+        return {
+            "name": "Multi-Agent System API",
+            "version": "1.0.0",
+            "status": "running",
+            "uptime": (datetime.now() - _start_time).total_seconds() if _start_time else 0
+        }
+
+    @app.get("/health")
+    async def health():
+        return {
+            "status": "ok",
+            "version": "1.0.0",
+            "uptime": (datetime.now() - _start_time).total_seconds() if _start_time else 0
+        }
+
+    @app.websocket("/ws/notifications")
+    async def websocket_endpoint(websocket):
+        if _ws_handler:
+            await _ws_handler.handle(websocket)
     
-    logger.info("API服务器启动")
-    
-    yield
-    
-    logger.info("API服务器关闭")
+    return app
 
 
-app = FastAPI(
-    title="Multi-Agent System API",
-    description="多Agent协作系统API",
-    version="1.0.0",
-    lifespan=lifespan
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(api_router, prefix="/api")
-
-
-@app.get("/")
-async def root():
-    """根路径"""
-    return {
-        "name": "Multi-Agent System API",
-        "version": "1.0.0",
-        "status": "running",
-        "uptime": (datetime.now() - _start_time).total_seconds() if _start_time else 0
-    }
-
-
-@app.websocket("/ws/notifications")
-async def websocket_endpoint(websocket):
-    """WebSocket通知端点"""
-    if _ws_handler:
-        await _ws_handler.handle(websocket)
+app = create_app()
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8000):

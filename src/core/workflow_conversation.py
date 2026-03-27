@@ -198,111 +198,195 @@ class WorkflowConversationMachine:
             logger.warning(f"[WorkflowMachine] Cannot send message in state: {self._state}")
             return
         
-        self._session.conversation_history.append(
-            ConversationTurn(role="user", content=user_message)
-        )
+        self._record_user_message(user_message)
         
-        is_confirm = any(kw in user_message for kw in self.CONFIRM_KEYWORDS)
-        
-        if is_confirm and self._state == WorkflowState.CONFIRMING:
+        if self._should_execute_workflow(user_message):
             await self._execute_workflow()
             return
         
+        await self._process_analyst_response()
+    
+    def _record_user_message(self, user_message: str) -> None:
+        """记录用户消息到会话历史"""
+        self._session.conversation_history.append(
+            ConversationTurn(role="user", content=user_message)
+        )
+    
+    def _should_execute_workflow(self, user_message: str) -> bool:
+        """检查是否应该执行工作流"""
+        is_confirm = any(kw in user_message for kw in self.CONFIRM_KEYWORDS)
+        return is_confirm and self._state == WorkflowState.CONFIRMING
+    
+    async def _process_analyst_response(self) -> None:
+        """处理分析师响应的主循环"""
         messages = self._build_conversation_messages()
         
         try:
             iteration = 0
+            max_iterations = 10
             
-            while True:
+            while iteration < max_iterations:
                 iteration += 1
                 logger.debug(f"[WorkflowMachine] 开始第 {iteration} 次迭代")
                 
-                response_content = ""
-                chunk_count = 0
-                async for chunk in self._protocol.chat(
-                    messages,
-                    model=self._analyst.model if self._analyst else None,
-                    temperature=self._analyst.temperature if self._analyst else 0.7
-                ):
-                    if chunk.content:
-                        response_content += chunk.content
-                        chunk_count += 1
-                
-                logger.debug(f"[WorkflowMachine] 收到响应，chunk数: {chunk_count}, 内容长度: {len(response_content)}")
-                logger.debug(f"[WorkflowMachine] 响应内容预览: {response_content[:200]}...")
+                response_content = await self._fetch_analyst_response(messages)
                 
                 tool_calls = self._analyst.parse_tool_calls(response_content)
                 logger.debug(f"[WorkflowMachine] 解析到 {len(tool_calls)} 个工具调用")
                 
                 if not tool_calls:
-                    self._session.conversation_history.append(
-                        ConversationTurn(role="analyst", content=response_content)
-                    )
+                    await self._handle_no_tool_response(response_content)
+                    return
+                
+                should_break = await self._handle_tool_calls(tool_calls, response_content, messages)
+                if should_break:
+                    return
                     
-                    if "需求已确认" in response_content:
-                        req_file = self._project_path / "requirements" / "requirements.md" if self._project_path else None
-                        if req_file and req_file.exists():
-                            self._confirmed_requirements = req_file.read_text(encoding='utf-8')
-                        else:
-                            self._confirmed_requirements = response_content
-                        self._set_state(WorkflowState.CONFIRMING)
-                        self._emit_message("analyst", response_content + "\n\n---\n**请确认需求后输入\"确认\"或\"开始执行\"来启动开发任务。**")
-                    else:
-                        self._emit_message("analyst", response_content)
-                    break
-                
-                for call in tool_calls:
-                    params_str = ", ".join([f"{k}={v}" for k, v in call["params"].items()])
-                    self._emit_message("tool", f"调用 {call['name']}({params_str})")
-                
-                tool_results = await self._analyst.execute_tools(tool_calls)
-                logger.debug(f"[WorkflowMachine] 工具执行完成，结果数: {len(tool_results)}")
-                for i, r in enumerate(tool_results):
-                    logger.debug(f"[WorkflowMachine] 工具结果[{i}] {r['name']}: {r['result'][:100]}...")
-                
-                for r in tool_results:
-                    result_preview = r['result']
-                    if len(result_preview) > 500:
-                        result_preview = result_preview[:500] + "...(已截断)"
-                    self._emit_message("tool_result", f"结果: {result_preview}")
-                
-                file_write_success = False
-                for call in tool_calls:
-                    if call['name'] == 'file_write':
-                        file_path = call['params'].get('file_path', '')
-                        if 'requirements' in file_path and file_path.endswith('.md'):
-                            file_write_success = True
-                            break
-                
-                if file_write_success:
-                    req_file = self._project_path / "requirements" / "requirements.md" if self._project_path else None
-                    if req_file and req_file.exists():
-                        self._confirmed_requirements = req_file.read_text(encoding='utf-8')
-                    else:
-                        for call in tool_calls:
-                            if call['name'] == 'file_write':
-                                self._confirmed_requirements = call['params'].get('content', '')
-                                break
-                    
-                    self._session.conversation_history.append(
-                        ConversationTurn(role="analyst", content=response_content)
-                    )
-                    self._set_state(WorkflowState.CONFIRMING)
-                    self._emit_message("analyst", "✅ 需求文档已保存！\n\n---\n**请确认需求后输入\"确认\"或\"开始执行\"来启动开发任务。**")
-                    break
-                
-                messages.append(Message(role="assistant", content=response_content))
-                tool_result_content = f"工具执行结果:\n" + "\n\n".join([f"**{r['name']}**:\n{r['result']}" for r in tool_results])
-                messages.append(Message(role="user", content=tool_result_content))
-                logger.debug(f"[WorkflowMachine] 已添加工具结果到消息列表，当前消息数: {len(messages)}")
-                logger.debug(f"[WorkflowMachine] 工具结果内容长度: {len(tool_result_content)}")
-                
         except Exception as e:
-            import traceback
-            logger.error(f"[WorkflowMachine] Error in conversation: {e}")
-            logger.error(f"[WorkflowMachine] Traceback: {traceback.format_exc()}")
-            self._set_state(WorkflowState.ERROR)
-            self._emit_message("system", f"对话出错: {str(e)}")
+            await self._handle_conversation_error(e)
+    
+    async def _fetch_analyst_response(self, messages: List[Message]) -> str:
+        """获取分析师响应"""
+        response_content = ""
+        chunk_count = 0
+        async for chunk in self._protocol.chat(
+            messages,
+            model=self._analyst.model if self._analyst else None,
+            temperature=self._analyst.temperature if self._analyst else 0.7
+        ):
+            if chunk.content:
+                response_content += chunk.content
+                chunk_count += 1
+        
+        logger.debug(f"[WorkflowMachine] 收到响应，chunk数: {chunk_count}, 内容长度: {len(response_content)}")
+        logger.debug(f"[WorkflowMachine] 响应内容预览: {response_content[:200]}...")
+        
+        return response_content
+    
+    async def _handle_no_tool_response(self, response_content: str) -> None:
+        """处理没有工具调用的响应"""
+        self._session.conversation_history.append(
+            ConversationTurn(role="analyst", content=response_content)
+        )
+        
+        if self._check_requirement_confirmed(response_content):
+            await self._handle_requirement_confirmed(response_content)
+        else:
+            self._emit_message("analyst", response_content)
+    
+    def _check_requirement_confirmed(self, content: str) -> bool:
+        """检查需求是否已确认"""
+        return "需求已确认" in content
+    
+    async def _handle_requirement_confirmed(self, response_content: str) -> None:
+        """处理需求确认状态"""
+        self._load_confirmed_requirements()
+        self._set_state(WorkflowState.CONFIRMING)
+        self._emit_message("analyst", response_content + "\n\n---\n**请确认需求后输入\"确认\"或\"开始执行\"来启动开发任务。**")
+    
+    def _load_confirmed_requirements(self) -> None:
+        """加载已确认的需求文档"""
+        req_file = self._project_path / "requirements" / "requirements.md" if self._project_path else None
+        if req_file and req_file.exists():
+            self._confirmed_requirements = req_file.read_text(encoding='utf-8')
+        else:
+            self._confirmed_requirements = ""
+    
+    async def _handle_tool_calls(
+        self, 
+        tool_calls: List[Dict[str, Any]], 
+        response_content: str,
+        messages: List[Message]
+    ) -> bool:
+        """
+        处理工具调用
+        
+        Returns:
+            是否应该结束循环
+        """
+        self._emit_tool_call_messages(tool_calls)
+        
+        tool_results = await self._analyst.execute_tools(tool_calls)
+        self._log_tool_results(tool_results)
+        self._emit_tool_result_messages(tool_results)
+        
+        if self._check_requirements_file_written(tool_calls):
+            await self._handle_requirements_file_written(tool_calls, response_content)
+            return True
+        
+        self._append_tool_results_to_messages(response_content, tool_results, messages)
+        return False
+    
+    def _emit_tool_call_messages(self, tool_calls: List[Dict[str, Any]]) -> None:
+        """发送工具调用消息"""
+        for call in tool_calls:
+            params_str = ", ".join([f"{k}={v}" for k, v in call["params"].items()])
+            self._emit_message("tool", f"调用 {call['name']}({params_str})")
+    
+    def _log_tool_results(self, tool_results: List[Dict[str, Any]]) -> None:
+        """记录工具结果日志"""
+        logger.debug(f"[WorkflowMachine] 工具执行完成，结果数: {len(tool_results)}")
+        for i, r in enumerate(tool_results):
+            result_preview = r['result'][:100] if len(r['result']) > 100 else r['result']
+            logger.debug(f"[WorkflowMachine] 工具结果[{i}] {r['name']}: {result_preview}...")
+    
+    def _emit_tool_result_messages(self, tool_results: List[Dict[str, Any]]) -> None:
+        """发送工具结果消息"""
+        for r in tool_results:
+            result_preview = r['result']
+            if len(result_preview) > 500:
+                result_preview = result_preview[:500] + "...(已截断)"
+            self._emit_message("tool_result", f"结果: {result_preview}")
+    
+    def _check_requirements_file_written(self, tool_calls: List[Dict[str, Any]]) -> bool:
+        """检查是否成功写入需求文件"""
+        for call in tool_calls:
+            if call['name'] == 'file_write':
+                file_path = call['params'].get('file_path', '')
+                if 'requirements' in file_path and file_path.endswith('.md'):
+                    return True
+        return False
+    
+    async def _handle_requirements_file_written(
+        self, 
+        tool_calls: List[Dict[str, Any]], 
+        response_content: str
+    ) -> None:
+        """处理需求文件写入成功"""
+        self._load_confirmed_requirements()
+        
+        if not self._confirmed_requirements:
+            for call in tool_calls:
+                if call['name'] == 'file_write':
+                    self._confirmed_requirements = call['params'].get('content', '')
+                    break
+        
+        self._session.conversation_history.append(
+            ConversationTurn(role="analyst", content=response_content)
+        )
+        self._set_state(WorkflowState.CONFIRMING)
+        self._emit_message("analyst", "✅ 需求文档已保存！\n\n---\n**请确认需求后输入\"确认\"或\"开始执行\"来启动开发任务。**")
+    
+    def _append_tool_results_to_messages(
+        self,
+        response_content: str,
+        tool_results: List[Dict[str, Any]],
+        messages: List[Message]
+    ) -> None:
+        """将工具结果追加到消息列表"""
+        messages.append(Message(role="assistant", content=response_content))
+        tool_result_content = "工具执行结果:\n" + "\n\n".join([f"**{r['name']}**:\n{r['result']}" for r in tool_results])
+        messages.append(Message(role="user", content=tool_result_content))
+        logger.debug(f"[WorkflowMachine] 已添加工具结果到消息列表，当前消息数: {len(messages)}")
+        logger.debug(f"[WorkflowMachine] 工具结果内容长度: {len(tool_result_content)}")
+    
+    async def _handle_conversation_error(self, error: Exception) -> None:
+        """处理对话错误"""
+        import traceback
+        logger.error(f"[WorkflowMachine] Error in conversation: {error}")
+        logger.error(f"[WorkflowMachine] Traceback: {traceback.format_exc()}")
+        self._set_state(WorkflowState.ERROR)
+        self._emit_message("system", f"对话出错: {str(error)}")
     
     def _build_conversation_messages(self) -> List[Message]:
         """构建对话消息列表"""
@@ -357,6 +441,8 @@ class WorkflowConversationMachine:
                     self._emit_message("system", f"🔄 {agent_name} 开始工作...")
                 elif status == "complete":
                     self._emit_message("system", f"✅ {agent_name} 完成")
+                elif status == "failed":
+                    self._emit_message("system", f"❌ {agent_name} 失败")
             
             workflow.on_progress = on_progress
             

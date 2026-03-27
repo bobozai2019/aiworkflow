@@ -75,6 +75,20 @@ SYSTEM_PROMPT = """你是一位专业的测试工程师。你的职责是：
    用途: 保存测试文件到 tests/ 目录
    **重要**: 文件路径必须以 `tests/` 开头
 
+5. **test_run** - 执行测试用例并获取测试报告
+   参数: test_path (测试路径), verbose (是否详细输出，默认true), timeout (超时时间，默认60秒)
+   用途: 运行pytest测试并获取测试结果统计
+   **重要**: 编写测试后应该执行测试验证测试用例是否正确
+
+   示例:
+   <tool>
+   名称: test_run
+   参数:
+     test_path: tests
+     verbose: true
+     timeout: 60
+   </tool>
+
 ## 工具调用格式
 当需要使用工具时，使用以下格式：
 ```
@@ -82,6 +96,22 @@ SYSTEM_PROMPT = """你是一位专业的测试工程师。你的职责是：
 名称: 工具名称
 参数:
   参数名: 参数值
+</tool>
+```
+
+**多行参数格式**:
+如果参数值包含多行内容（如测试代码），使用以下格式：
+```
+<tool>
+名称: file_write
+参数:
+  file_path: tests/test_example.py
+  content: |-
+    import pytest
+
+    def test_addition():
+        assert 1 + 1 == 2
+  mode: write
 </tool>
 ```
 

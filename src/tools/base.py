@@ -182,7 +182,15 @@ class FileReadTool(BaseTool):
             return ToolResult(
                 success=False,
                 content="",
-                error=f"权限拒绝: {agent_name} 没有读取 {file_path} 的权限\n允许访问的目录:\n{allowed_info}"
+                error=f"""权限拒绝: {agent_name} 没有读取 {file_path} 的权限
+
+原因: 该文件不在你的工作区域内
+
+你可以访问的目录:
+{allowed_info}
+
+提示: 请检查文件路径是否正确，或者该文件是否应该由其他Agent处理。
+如果你认为需要访问此文件，请联系系统管理员调整权限配置。"""
             )
         
         try:
@@ -266,7 +274,14 @@ class FileListTool(BaseTool):
             return ToolResult(
                 success=False,
                 content="",
-                error=f"权限拒绝: {agent_name} 没有访问 {directory} 的权限\n允许访问的目录:\n{allowed_info}"
+                error=f"""权限拒绝: {agent_name} 没有访问 {directory} 的权限
+
+原因: 该目录不在你的工作区域内
+
+你可以访问的目录:
+{allowed_info}
+
+提示: 请检查目录路径是否正确，或者该目录是否应该由其他Agent处理。"""
             )
         
         try:
@@ -364,7 +379,14 @@ class FileSearchTool(BaseTool):
             return ToolResult(
                 success=False,
                 content="",
-                error=f"权限拒绝: {agent_name} 没有搜索 {directory} 的权限\n允许访问的目录:\n{allowed_info}"
+                error=f"""权限拒绝: {agent_name} 没有搜索 {directory} 的权限
+
+原因: 该目录不在你的工作区域内
+
+你可以访问的目录:
+{allowed_info}
+
+提示: 请检查目录路径是否正确。"""
             )
         
         try:
@@ -466,7 +488,14 @@ class FileWriteTool(BaseTool):
             return ToolResult(
                 success=False,
                 content="",
-                error=f"权限拒绝: {agent_name} 没有写入 {file_path} 的权限\n允许写入的目录:\n{allowed_info}"
+                error=f"""权限拒绝: {agent_name} 没有写入 {file_path} 的权限
+
+原因: 该文件不在你的可写区域内
+
+你可以写入的目录:
+{allowed_info}
+
+提示: 请检查文件路径是否正确，确保文件保存在你的工作目录中。"""
             )
         
         try:

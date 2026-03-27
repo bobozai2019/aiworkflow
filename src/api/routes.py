@@ -78,6 +78,12 @@ async def create_task(request: TaskCreateRequest):
     )
 
 
+@router.get("/task/{task_id}", response_model=TaskStatusResponse)
+async def get_task(task_id: str):
+    """获取任务（简化端点）"""
+    return await get_task_status(task_id)
+
+
 @router.get("/task/{task_id}/status", response_model=TaskStatusResponse)
 async def get_task_status(task_id: str):
     """获取任务状态"""
@@ -146,6 +152,32 @@ async def control_agent(request: AgentControlRequest):
         success=True,
         message=f"Agent控制命令已发送: {request.action}"
     )
+
+
+@router.get("/protocols")
+async def list_protocols():
+    """列出可用协议"""
+    return {
+        "protocols": [
+            {"name": "deepseek", "description": "DeepSeek API"},
+            {"name": "qwen", "description": "通义千问 API"},
+            {"name": "glm", "description": "智谱 GLM API"},
+            {"name": "minimax", "description": "MiniMax API"},
+        ]
+    }
+
+
+@router.get("/agents")
+async def list_agents():
+    """列出可用Agent"""
+    return {
+        "agents": [
+            {"name": "analyst", "description": "需求分析师"},
+            {"name": "architect", "description": "系统架构师"},
+            {"name": "coder", "description": "代码开发者"},
+            {"name": "tester", "description": "测试员"},
+        ]
+    }
 
 
 async def _run_task(task_id: str):

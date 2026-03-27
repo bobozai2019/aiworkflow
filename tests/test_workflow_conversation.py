@@ -5,7 +5,9 @@
 import pytest
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+import tempfile
+import os
 
 from src.core.workflow_conversation import (
     WorkflowConversationMachine,
@@ -13,6 +15,7 @@ from src.core.workflow_conversation import (
     RequirementSession,
     ConversationTurn,
 )
+from src.core.message import Message
 
 
 class MockProtocol:
@@ -99,6 +102,248 @@ class TestRequirementSession:
         assert session.session_id == "test123"
         assert len(session.conversation_history) == 0
         assert session.confirmed == False
+
+
+class TestRefactoredMethods:
+    """测试重构后的私有方法"""
+    
+    def test_record_user_message(self):
+        """测试记录用户消息"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        machine._session = RequirementSession(session_id="test")
+        
+        machine._record_user_message("测试消息")
+        
+        assert len(machine._session.conversation_history) == 1
+        assert machine._session.conversation_history[0].content == "测试消息"
+        assert machine._session.conversation_history[0].role == "user"
+    
+    def test_record_user_message_appends(self):
+        """测试记录多条用户消息"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        machine._session = RequirementSession(session_id="test")
+        
+        machine._record_user_message("第一条消息")
+        machine._record_user_message("第二条消息")
+        
+        assert len(machine._session.conversation_history) == 2
+        assert machine._session.conversation_history[0].content == "第一条消息"
+        assert machine._session.conversation_history[1].content == "第二条消息"
+    
+    def test_should_execute_workflow_true_in_confirming_state(self):
+        """测试在确认状态下应该执行工作流"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        machine._state = WorkflowState.CONFIRMING
+        
+        assert machine._should_execute_workflow("确认") == True
+        assert machine._should_execute_workflow("开始执行") == True
+        assert machine._should_execute_workflow("就这样") == True
+        assert machine._should_execute_workflow("可以开始") == True
+        assert machine._should_execute_workflow("执行吧") == True
+        assert machine._should_execute_workflow("开始开发") == True
+        assert machine._should_execute_workflow("没问题") == True
+        assert machine._should_execute_workflow("好的开始") == True
+    
+    def test_should_execute_workflow_false_in_analyzing_state(self):
+        """测试在分析状态下不应该执行工作流"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        machine._state = WorkflowState.ANALYZING
+        
+        assert machine._should_execute_workflow("确认") == False
+        assert machine._should_execute_workflow("开始执行") == False
+    
+    def test_should_execute_workflow_false_without_keyword(self):
+        """测试没有关键词时不执行工作流"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        machine._state = WorkflowState.CONFIRMING
+        
+        assert machine._should_execute_workflow("普通消息") == False
+        assert machine._should_execute_workflow("继续讨论") == False
+    
+    def test_check_requirement_confirmed_true(self):
+        """测试检测到需求已确认"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        
+        assert machine._check_requirement_confirmed("需求已确认") == True
+        assert machine._check_requirement_confirmed("需求已确认，请查看") == True
+        assert machine._check_requirement_confirmed("以上是需求，需求已确认。") == True
+    
+    def test_check_requirement_confirmed_false(self):
+        """测试未检测到需求确认"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        
+        assert machine._check_requirement_confirmed("还在分析中") == False
+        assert machine._check_requirement_confirmed("需求文档") == False
+        assert machine._check_requirement_confirmed("") == False
+    
+    def test_check_requirements_file_written_true(self):
+        """测试检测到需求文件写入成功"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        
+        tool_calls = [
+            {"name": "file_write", "params": {"file_path": "requirements/requirements.md", "content": "test"}}
+        ]
+        assert machine._check_requirements_file_written(tool_calls) == True
+        
+        tool_calls = [
+            {"name": "file_write", "params": {"file_path": "requirements/spec.md", "content": "test"}}
+        ]
+        assert machine._check_requirements_file_written(tool_calls) == True
+    
+    def test_check_requirements_file_written_false(self):
+        """测试未检测到需求文件写入"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        
+        tool_calls = [
+            {"name": "file_read", "params": {"file_path": "requirements/test.md"}}
+        ]
+        assert machine._check_requirements_file_written(tool_calls) == False
+        
+        tool_calls = [
+            {"name": "file_write", "params": {"file_path": "code/main.py", "content": "test"}}
+        ]
+        assert machine._check_requirements_file_written(tool_calls) == False
+        
+        tool_calls = [
+            {"name": "file_write", "params": {"file_path": "test.txt", "content": "test"}}
+        ]
+        assert machine._check_requirements_file_written(tool_calls) == False
+        
+        tool_calls = []
+        assert machine._check_requirements_file_written(tool_calls) == False
+    
+    def test_load_confirmed_requirements_with_file(self):
+        """测试从文件加载已确认的需求"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_path = Path(tmpdir)
+            requirements_dir = project_path / "requirements"
+            requirements_dir.mkdir()
+            req_file = requirements_dir / "requirements.md"
+            req_file.write_text("# 测试需求\n\n这是测试需求内容", encoding='utf-8')
+            
+            machine._project_path = project_path
+            machine._load_confirmed_requirements()
+            
+            assert machine._confirmed_requirements == "# 测试需求\n\n这是测试需求内容"
+    
+    def test_load_confirmed_requirements_without_file(self):
+        """测试没有需求文件时的加载"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_path = Path(tmpdir)
+            machine._project_path = project_path
+            machine._load_confirmed_requirements()
+            
+            assert machine._confirmed_requirements == ""
+    
+    def test_load_confirmed_requirements_without_project_path(self):
+        """测试没有项目路径时的加载"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        machine._project_path = None
+        
+        machine._load_confirmed_requirements()
+        
+        assert machine._confirmed_requirements == ""
+    
+    def test_build_conversation_messages(self):
+        """测试构建对话消息列表"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        machine._session = RequirementSession(session_id="test")
+        machine._session.conversation_history = [
+            ConversationTurn(role="user", content="用户消息"),
+            ConversationTurn(role="analyst", content="分析师回复"),
+        ]
+        
+        from src.agents.analyst import AnalystAgent
+        machine._analyst = AnalystAgent(protocol=protocol)
+        
+        messages = machine._build_conversation_messages()
+        
+        assert len(messages) == 3
+        assert messages[0].role == "system"
+        assert messages[1].role == "user"
+        assert messages[1].content == "用户消息"
+        assert messages[2].role == "assistant"
+        assert messages[2].content == "分析师回复"
+    
+    def test_emit_tool_call_messages(self):
+        """测试发送工具调用消息"""
+        protocol = MockProtocol()
+        messages = []
+        
+        def on_message(role, content):
+            messages.append((role, content))
+        
+        machine = WorkflowConversationMachine(protocol=protocol, on_message=on_message)
+        
+        tool_calls = [
+            {"name": "file_read", "params": {"file_path": "test.py"}},
+            {"name": "file_write", "params": {"file_path": "output.txt", "content": "hello"}},
+        ]
+        
+        machine._emit_tool_call_messages(tool_calls)
+        
+        assert len(messages) == 2
+        assert messages[0][0] == "tool"
+        assert "file_read" in messages[0][1]
+        assert messages[1][0] == "tool"
+        assert "file_write" in messages[1][1]
+    
+    def test_emit_tool_result_messages(self):
+        """测试发送工具结果消息"""
+        protocol = MockProtocol()
+        messages = []
+        
+        def on_message(role, content):
+            messages.append((role, content))
+        
+        machine = WorkflowConversationMachine(protocol=protocol, on_message=on_message)
+        
+        tool_results = [
+            {"name": "file_read", "result": "文件内容"},
+            {"name": "file_write", "result": "写入成功"},
+        ]
+        
+        machine._emit_tool_result_messages(tool_results)
+        
+        assert len(messages) == 2
+        assert messages[0][0] == "tool_result"
+        assert "文件内容" in messages[0][1]
+    
+    def test_emit_tool_result_messages_truncation(self):
+        """测试工具结果消息截断"""
+        protocol = MockProtocol()
+        messages = []
+        
+        def on_message(role, content):
+            messages.append((role, content))
+        
+        machine = WorkflowConversationMachine(protocol=protocol, on_message=on_message)
+        
+        long_result = "x" * 1000
+        tool_results = [{"name": "test", "result": long_result}]
+        
+        machine._emit_tool_result_messages(tool_results)
+        
+        assert len(messages) == 1
+        assert "已截断" in messages[0][1]
+        assert len(messages[0][1]) < len(long_result)
 
 
 class TestWorkflowConversationMachine:
@@ -209,6 +454,16 @@ class TestWorkflowConversationMachine:
         assert machine.is_active() == False
         assert len(messages) == 1
         assert messages[0][0] == "system"
+    
+    def test_set_project_path(self):
+        """测试设置项目路径"""
+        protocol = MockProtocol()
+        machine = WorkflowConversationMachine(protocol=protocol)
+        
+        test_path = Path("/test/project")
+        machine.set_project_path(test_path)
+        
+        assert machine.project_path == test_path
 
 
 class TestWorkflowIntegration:

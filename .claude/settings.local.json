@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l src/**/*.py tests/**/*.py)",
+      "Bash(python -m pytest tests/test_workflow_feedback.py::test_code_executor_tool -v -s)",
+      "Bash(python -m pytest tests/test_workflow_feedback.py::test_test_runner_tool -v -s)",
+      "Bash(git add:*)"
+    ]
+  }
+}

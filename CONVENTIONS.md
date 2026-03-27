@@ -339,7 +339,71 @@ except ProtocolError as e:
 
 ---
 
-## 十一、禁止事项
+## 十一、TDD测试驱动开发
+
+### 11.1 开发原则
+
+**所有代码改动必须遵循测试驱动开发流程**：
+
+1. **修改代码前**：检查 `tests/` 目录是否有相关测试
+2. **如果没有测试**：先补充测试用例
+3. **运行测试**：确认基线状态
+4. **进行代码修改**
+5. **修改完成后**：运行测试确保全部通过
+
+### 11.2 测试命令
+
+```bash
+# 运行所有测试
+pytest tests/ -v
+
+# 运行特定测试文件
+pytest tests/test_xxx.py -v
+
+# 运行带覆盖率
+pytest tests/ -v --cov=src --cov-report=html
+```
+
+### 11.3 覆盖率要求
+
+| 模块类型 | 覆盖率要求 |
+|----------|------------|
+| 核心业务逻辑 | > 80% |
+| 工具类/辅助函数 | > 60% |
+| 配置/初始化代码 | > 40% |
+
+### 11.4 测试文件命名
+
+```
+tests/
+├── test_agents.py       # Agent模块测试
+├── test_protocols.py    # 协议模块测试
+├── test_workflow.py     # 工作流测试
+└── test_xxx.py          # 其他模块测试
+```
+
+### 11.5 测试用例规范
+
+```python
+class TestFeatureName:
+    """功能测试类"""
+    
+    def test_normal_case(self):
+        """测试正常情况"""
+        pass
+    
+    def test_edge_case(self):
+        """测试边界情况"""
+        pass
+    
+    def test_error_case(self):
+        """测试异常情况"""
+        pass
+```
+
+---
+
+## 十二、禁止事项
 
 - ❌ 禁止硬编码API密钥
 - ❌ 禁止跨层直接调用（如UI直接调用Protocol）

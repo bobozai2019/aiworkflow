@@ -111,3 +111,8 @@ class WebSocketHandler:
     def connection_count(self) -> int:
         """当前连接数"""
         return len(self._connections)
+    
+    @property
+    def connections(self) -> List[WebSocket]:
+        """当前连接列表"""
+        return self._connections.copy()

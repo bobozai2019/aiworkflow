@@ -7,6 +7,7 @@ from src.agents.base_agent import BaseAgent, AgentState
 from src.agents.analyst import AnalystAgent
 from src.agents.architect import ArchitectAgent
 from src.agents.coder import CoderAgent
+from src.agents.debugger import DebuggerAgent
 from src.agents.tester import TesterAgent
 from src.agents.processors import (
     OutputProcessor,
@@ -25,6 +26,7 @@ __all__ = [
     "AnalystAgent",
     "ArchitectAgent",
     "CoderAgent",
+    "DebuggerAgent",
     "TesterAgent",
     "OutputProcessor",
     "ProcessedOutput",

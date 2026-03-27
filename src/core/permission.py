@@ -45,7 +45,7 @@ class DirectoryPermission:
     def resolve_path(self, project_root: Path) -> Path:
         """解析为绝对路径（不使用 resolve，避免目录不存在时的问题）"""
         path = project_root / self.directory
-        return Path(str(path).replace('\\', '/'))
+        return path
     
     def matches(self, file_path: Path, project_root: Path) -> bool:
         """检查文件路径是否在此目录权限范围内"""
@@ -55,8 +55,14 @@ class DirectoryPermission:
                 resolved_file = project_root / file_path
             else:
                 resolved_file = file_path
-            resolved_file = Path(str(resolved_file).replace('\\', '/'))
-            return str(resolved_file).startswith(str(resolved_dir))
+            
+            dir_str = resolved_dir.as_posix().rstrip('/')
+            file_str = resolved_file.as_posix().rstrip('/')
+            
+            if file_str == dir_str:
+                return True
+            
+            return file_str.startswith(dir_str + '/')
         except Exception:
             return False
 
@@ -81,6 +87,8 @@ class AgentPermission:
         """
         获取指定路径的权限
         
+        使用最长路径匹配原则，返回最具体的权限配置。
+        
         Args:
             file_path: 文件路径
             project_root: 项目根目录
@@ -90,14 +98,24 @@ class AgentPermission:
         """
         file_path = Path(file_path)
         if not file_path.is_absolute():
-            file_path = (project_root / file_path).resolve()
+            file_path = project_root / file_path
+        
+        best_match: DirectoryPermission | None = None
+        best_match_len = -1
         
         for dir_perm in self.directories:
             if dir_perm.matches(file_path, project_root):
-                pattern_perm = self._get_pattern_permission(file_path)
-                if pattern_perm != Permission.NONE:
-                    return self._intersect_permissions(dir_perm.permission, pattern_perm)
-                return dir_perm.permission
+                resolved_dir = dir_perm.resolve_path(project_root)
+                match_len = len(resolved_dir.as_posix())
+                if match_len > best_match_len:
+                    best_match = dir_perm
+                    best_match_len = match_len
+        
+        if best_match:
+            pattern_perm = self._get_pattern_permission(file_path)
+            if pattern_perm != Permission.NONE:
+                return self._intersect_permissions(best_match.permission, pattern_perm)
+            return best_match.permission
         
         return Permission.NONE
     
@@ -194,6 +212,27 @@ class PermissionManager:
                         directory="code",
                         permission=Permission.READ_WRITE,
                         description="代码目录，可读写"
+                    ),
+                ],
+                file_patterns={}
+            ),
+            "调试员": AgentPermission(
+                agent_name="调试员",
+                directories=[
+                    DirectoryPermission(
+                        directory="requirements",
+                        permission=Permission.READ,
+                        description="需求文档目录，只读"
+                    ),
+                    DirectoryPermission(
+                        directory="code",
+                        permission=Permission.READ_WRITE,
+                        description="代码目录，可读写（修复代码）"
+                    ),
+                    DirectoryPermission(
+                        directory="tests",
+                        permission=Permission.READ,
+                        description="测试目录，只读"
                     ),
                 ],
                 file_patterns={}

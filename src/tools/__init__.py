@@ -17,6 +17,11 @@ from src.tools.base import (
     WebFetchTool,
     register_default_tools,
 )
+from src.tools.executor import (
+    CodeExecutorTool,
+    TestRunnerTool,
+    register_executor_tools,
+)
 
 __all__ = [
     "ToolResult",
@@ -29,5 +34,8 @@ __all__ = [
     "FileWriteTool",
     "WebSearchTool",
     "WebFetchTool",
+    "CodeExecutorTool",
+    "TestRunnerTool",
     "register_default_tools",
+    "register_executor_tools",
 ]
